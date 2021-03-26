@@ -181,9 +181,9 @@ func (aec *AppendEntriesCall) callback(peerIndex int){
 	}else if reply.Success{
 		aec.IncrementSuccessCount()
 		if aec.args[peerIndex].Snapshot != nil {
-			//
-			//newNextIndex = 
-			//newMatchIndex = 
+			newMatchIndex = aec.raft.GetHeadIndex() + len(aec.args[peerIndex].Entries) +1
+			newNextIndex = newMatchIndex + 1
+			
 		}else{
 			newNextIndex = aec.args[peerIndex].PrevLogIndex + len(aec.args[peerIndex].Entries) +1
 			newMatchIndex = aec.args[peerIndex].PrevLogIndex + len(aec.args[peerIndex].Entries)
@@ -193,7 +193,9 @@ func (aec *AppendEntriesCall) callback(peerIndex int){
 		// aec.raft.matchIndex[peerIndex] = aec.args[peerIndex].PrevLogIndex + len(aec.args[peerIndex].Entries)
 	}else{
 		//follower can't match entrys 
-		if aec.args[peerIndex].PrevLogIndex / 2 < 50 {
+		if aec.args[peerIndex].Snapshot != nil {
+			return
+		}else if aec.args[peerIndex].PrevLogIndex / 2 < 50 {
 			newNextIndex = aec.raft.matchIndex[peerIndex] + 1
 		}else {
 			newNextIndex = aec.args[peerIndex].PrevLogIndex / 2

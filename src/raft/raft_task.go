@@ -38,6 +38,7 @@ func (rtd *RaftTaskAttr) SetDone() {
 	rtd.doneCond.Broadcast()
 }
 
+
 type ChangePeerTwoIndexTask struct{
 	RaftTaskAttr
 	PeerIndex int
@@ -97,6 +98,23 @@ type CommitTask struct {
 	commitIndex int
 }
 
+type InstallSnapShot struct {
+	RaftTaskAttr
+	snapShot []byte
+	newEntries []RaftLog
+	commitIndex int
+}
+
+func(iss *InstallSnapShot) Execute(){
+	iss.raft.log = iss.newEntries
+	iss.raft.applyCh <- ApplyMsg {
+		CommandValid : false,
+		UseSnapshot : true,
+		Snapshot : iss.snapShot,
+	}
+	iss.raft.commitIndex = iss.commitIndex
+}
+
 func(cpti *ChangePeerTwoIndexTask) Execute(){
 	if cpti.NextIndex <= cpti.raft.matchIndex[cpti.PeerIndex] {
 		//如果要更新的NextIndex 甚至比现在的matchIndex还小,说明这次callBack已经过期了
@@ -110,11 +128,13 @@ func(cpti *ChangePeerTwoIndexTask) Execute(){
 }
 
 func(lst *LeaderStartTask) Execute(){
+	idx := len(lst.raft.log) + lst.raft.GetHeadIndex()
 	newLog := RaftLog{
 		Term : lst.raft.currentTerm,
 		Command : lst.Command,
+		Index : idx,
 	}
-	lst.AppearIndex = len(lst.raft.log)
+	lst.AppearIndex = idx
 	lst.AppearTerm = lst.raft.currentTerm
 	lst.raft.log = append(lst.raft.log,newLog)
 	fmt.Println("leader start:新增了一条日志,len(log)= "+strconv.Itoa(len(lst.raft.log)))

@@ -202,7 +202,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	candidateLogNew := false
 	if rf.log[len(rf.log)-1].Term < args.LastLogTerm {
 		candidateLogNew = true
-	} else if rf.log[len(rf.log)-1].Term == args.LastLogTerm && len(rf.log) <= args.LastLogIndex + 1{
+	} else if rf.log[len(rf.log)-1].Term == args.LastLogTerm && rf.log[len(rf.log)-1].Index <= args.LastLogIndex + 1{
 		candidateLogNew = true
 	}
 	fmt.Println("peer:= "+ strconv.Itoa(rf.me)+",Candidate :="+strconv.Itoa(args.CandidateId)+"的RV argsTerm:"+strconv.Itoa(args.Term)+"  current: " + strconv.Itoa( rf.currentTerm)+", candidateLogNew: "+strconv.FormatBool(candidateLogNew)+",args.lastTerm:="+strconv.Itoa(args.LastLogTerm)+",args.lastLogIndex:="+strconv.Itoa(args.LastLogIndex)+",peerLastTerm:="+strconv.Itoa(rf.log[len(rf.log)-1].Term)+",peerLastIndex:="+strconv.Itoa(args.LastLogIndex))
@@ -257,12 +257,23 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	headIndex := rf.GetHeadIndex()
 	// 此时已经承认了leader
 	if args.Snapshot != nil {
-		rf.log = args.Entries
-		rf.commitIndex = args.LeaderCommit
+		//todo
+		task := &InstallSnapShot{
+			RaftTaskAttr : RaftTaskAttr{
+				done : false,
+				doneCond : sync.NewCond(&sync.Mutex{}),
+				raft : rf,
+		 	},
+			 snapShot :  args.Snapshot,
+			 newEntries : args.Entries,
+			 commitIndex : args.LeaderCommit,
+		}
+		rf.taskQueue <- task
+		task.WaitForDone()	
 		return
 	}
 	// 如果没有snapshot,则需要判断log是否匹配
-	if len(rf.log) -1 + headIndex < args.PrevLogIndex {
+	if rf.LastLogIndex()< args.PrevLogIndex {
 		//没有PrevLogIndex
 		reply.Success = false
 		return
@@ -280,7 +291,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.taskQueue <- task
 		task.WaitForDone()
 		return
-	}else if len(rf.log) -1 + headIndex > args.PrevLogIndex{
+	}else if rf.LastLogIndex() > args.PrevLogIndex{
 		//自己的log比leader以为的要长,首先要检测是否是expire RPC,如果不是,删掉没用的
 		isExpireRpc := true
 		checkedDeleteIndex:= -1
@@ -538,6 +549,7 @@ func (rf *Raft) pingLoop() {
 		headIndex := rf.GetHeadIndex()
 		// 害怕在构建entries后,commitIndex增长
 		validCommitIndex := rf.commitIndex
+		tryCommitLastIndex := rf.LastLogIndex()
 		for i:=0; i< len(rf.peers); i ++{
 			if i == rf.me{
 				continue
@@ -559,16 +571,14 @@ func (rf *Raft) pingLoop() {
 
 				replies[i].Term = 0
 				replies[i].Success = false
-				
-
-				
 
 			}else{
-				endEntriesNum := len(rf.log) - rf.nextIndex[i] 
+				endEntriesNum := rf.LastLogIndex() + 1 - rf.nextIndex[i] 
 				if endEntriesNum == 0 {
 					entries =[]RaftLog{}
 					fmt.Println("leader:= "+strconv.Itoa(rf.me)+" 对peer: "+strconv.Itoa(i)+" ,len(log) = "+strconv.Itoa(len(rf.log))+", 没有需要发送的日志"+" nextIndex:"+strconv.Itoa(rf.nextIndex[i])+" leader的len(log):"+strconv.Itoa(len(rf.log)))
 				}else {
+					fmt.Println("endEntriesNum :="+strconv.Itoa(endEntriesNum))
 					entries = make([]RaftLog,endEntriesNum)
 					fmt.Println("leader:= "+strconv.Itoa(rf.me)+" 对peer: "+strconv.Itoa(i)+"有要发送的日志,endEntriesNum:="+strconv.Itoa(endEntriesNum)+" nextIndex:"+strconv.Itoa(rf.nextIndex[i])+" leader的len(log):"+strconv.Itoa(len(rf.log)))
 					InsertFor:
@@ -611,7 +621,7 @@ func (rf *Raft) pingLoop() {
 				doneCond : sync.NewCond(&sync.Mutex{}),
 				MustExit : false ,
 			},
-			currentLogIndex : len(rf.log)-1,
+			currentLogIndex : tryCommitLastIndex,
 			args : args,
 			replies : replies,
 		}
@@ -827,7 +837,7 @@ func (rf *Raft) PersisterSize() int {
 func (rf *Raft) GoSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	baseIndex := rf.log[0].Index
+	baseIndex := rf.GetHeadIndex()
 	lastIndex := rf.LastLogIndex()
 
 	if index <= baseIndex || index > lastIndex {
@@ -863,6 +873,7 @@ func (rf *Raft) LastLogIndex() int {
 func (rf *Raft) GetHeadIndex() int {
 	return rf.log[0].Index
 }
+
 
 
 
